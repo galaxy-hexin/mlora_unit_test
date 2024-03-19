@@ -5,7 +5,9 @@ import torch
 from abc import ABCMeta, abstractclassmethod
 from typing import Tuple, Dict, List, Optional
 
-
+'''
+全pass
+'''
 class LLMOutput(metaclass=ABCMeta):
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         pass

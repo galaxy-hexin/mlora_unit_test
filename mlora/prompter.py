@@ -3,6 +3,13 @@ import logging
 import os.path as osp
 from typing import Union
 
+'''
+这个类比较简单，主要是对训练的样本数据进行提示词工程
+_init_：使用文件地址打开不同的模板文件
+generate_prompt：根据是否有输入，使用不同的模板把input替换成不同的字符
+get_response:输出模板输出就行
+'''
+
 
 # manage templates and prompt building.
 class Prompter:

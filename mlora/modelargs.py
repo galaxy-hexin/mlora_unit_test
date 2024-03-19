@@ -3,8 +3,9 @@ from typing import List, Dict, Callable
 from dataclasses import dataclass
 
 import torch
-
-
+'''
+dataclass
+'''
 Tokens = List[int]
 Masks = List[bool]
 

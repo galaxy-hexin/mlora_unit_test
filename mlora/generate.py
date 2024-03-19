@@ -46,6 +46,11 @@ class GenerateConfig:
             return self.prompter_.get_response(output)
 
 
+'''
+文本生成策略，top_p是选择概率最高的预测文本，top_k是选择概率中最高的k个值随机抽取；
+选择策略
+'''
+
 def _logits_sample_top_p(probs, p, filter_value=float("-inf"), min_tokens_to_keep=1):
     sorted_logits, sorted_indices = torch.sort(probs, descending=False)
     cumulative_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
@@ -62,6 +67,10 @@ def _logits_sample_top_k(probs, k, filter_value=float("-inf")):
     return probs.masked_fill(indices_to_remove, filter_value)
 
 
+'''
+gather函数是根据输入的prev_tokens标记作为索引对probs选取对应的概率分布，得到概率矩阵
+where 函数是根据第一个参数给出的条件，对于两个矩阵进行取值，
+'''
 def _logits_repetition_penalty(prev_tokens, probs, penalty):
     score = torch.gather(probs, 1, prev_tokens)
     score = torch.where(score < 0, score * penalty, score / penalty)

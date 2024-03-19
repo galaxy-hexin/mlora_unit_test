@@ -35,7 +35,7 @@ class CasualTask(BasicTask):
             data_point.get("output", None)),
             None, {"bos": True, "eos": True})
 
-
+# 这里有一个函数名参数，意味着这个函数可以使用不同的数据加载方式；callable是表示这个变量可调用
 # Sequence Classification
 class SequenceClassification(BasicTask):
     def __init__(self,
@@ -60,6 +60,12 @@ class SequenceClassification(BasicTask):
         }
 
 
+#一个任务分类字典
+#glue是一个自然语言理解基准和分析平台
+#https://zhuanlan.zhihu.com/p/135283598
+#cola，mnli等均为glue中的测试任务，比如cola是单句子分类任务
+    
+
 classification_tasks = {
     "glue:cola": SequenceClassification(
         task_type="single_label_classification",
@@ -71,6 +77,7 @@ classification_tasks = {
             {"bos": True, "eos": True}
         ),
     ),
+
     "glue:mnli": SequenceClassification(
         task_type="single_label_classification",
         num_labels=3,
@@ -81,6 +88,7 @@ classification_tasks = {
             {"bos": True, "eos": True},
         ),
     ),
+
     "glue:mrpc": SequenceClassification(
         task_type="single_label_classification",
         num_labels=2,
@@ -91,6 +99,7 @@ classification_tasks = {
             {"bos": True, "eos": True},
         ),
     ),
+
     "glue:qnli": SequenceClassification(
         task_type="single_label_classification",
         num_labels=2,
@@ -101,6 +110,7 @@ classification_tasks = {
             {"bos": True, "eos": True},
         ),
     ),
+
     "glue:qqp": SequenceClassification(
         task_type="single_label_classification",
         num_labels=2,
@@ -111,6 +121,7 @@ classification_tasks = {
             {"bos": True, "eos": True},
         ),
     ),
+
     "glue:rte": SequenceClassification(
         task_type="single_label_classification",
         num_labels=2,
@@ -121,6 +132,7 @@ classification_tasks = {
             {"bos": True, "eos": True},
         ),
     ),
+
     "glue:sst2": SequenceClassification(
         task_type="single_label_classification",
         num_labels=2,
@@ -131,6 +143,7 @@ classification_tasks = {
             {"bos": True, "eos": True},
         ),
     ),
+
     "glue:wnli": SequenceClassification(
         task_type="single_label_classification",
         num_labels=2,
@@ -144,6 +157,17 @@ classification_tasks = {
 }
 
 
+#评估方案参数配置
+'''
+适配器名；任务类型；批处理大小；
+任务类型；数据集；评估集；批处理起始id，批处理结束id；
+
+task_type是一个任务名，范围对应classification类中的关键字
+self.data_ = hf_datasets.load_dataset(result[0], result[1])["validation"]
+上述语句是加载[0]数据集中的[1]子集，比如加载glue合集中的子集cola；
+
+主要是记录训练数据和评估方案
+'''
 @dataclass
 class EvaluateConfig:
     adapter_name_: str = None
@@ -172,6 +196,23 @@ class EvaluateConfig:
         return self.task_.dataload_function_(data_point)
 
 
+'''
+二次补充：
+我个人认为这个就是用来统一接口的（）
+
+bacth 是一次性处理的信息集
+batch size是这一批的数据的大小
+batch_start_id &batch_end_id是在数据集里的位置，
+数据集里每一个index都是一个数据
+因此一个config会先把自己start-end的数据都拿出来用Tokenizer进行embeddeding编码
+label 是数据集的标签，不同的数据集有不同的标签，比如cola的标签为0，1，表示假，真
+kwargs 目前猜测是一个标志位
+
+这个函数的目的，是为了将系列evaluateConfig拆分成连续的config（config的start和end相等），
+和连续并且对应的label
+还有对应的multilorabatchdata（这个里面要包含完整的token序列，以及对应的batchdata序列，以及对应的mask配置）
+
+'''
 def _dispatch_task_in(tokenizer: Tokenizer, configs: List[EvaluateConfig], max_seq_len: int):
     batch_data_config = []
     current_configs = []
@@ -184,17 +225,22 @@ def _dispatch_task_in(tokenizer: Tokenizer, configs: List[EvaluateConfig], max_s
         config.batch_end_idx_ = min(
             config.batch_start_idx_ + config.batch_size_, len(config.data_))
         batch_start_idx = len(batch_tokens)
+
         for idx in range(config.batch_start_idx_, config.batch_end_idx_):
             if idx >= len(config.data_):
                 break
             texts, labels, kwargs = config.dataload(config.data_[idx])
+
             if "eos" in kwargs:
                 kwargs["eos"] = False
-            tokens = tokenizer.encode(texts, **kwargs)
+            tokens = tokenizer.encode(texts, **kwargs) #**dict字典一次性传参
+
+            #词条太长插入最大词条值，太短则用填充符补充
             if len(tokens) > max_seq_len:
                 tokens = tokens[:max_seq_len]
             while len(tokens) < max_seq_len:
                 tokens.append(tokenizer.pad_id_)
+
             batch_tokens.append(tokens)
             atten_masks.append(tokenizer.mask_from(tokens))
             batch_labels.append(labels.copy())
@@ -213,6 +259,25 @@ def _dispatch_task_in(tokenizer: Tokenizer, configs: List[EvaluateConfig], max_s
                 gradient_checkpoint_=False))
 
 
+
+'''
+@torch.inference_mode()模型评估用的，关闭版本计数器和视图追踪，能获得更好的性能
+（这段暂时不太用的到，gpt给的比较清晰，看它的吧就）
+这段代码是一个用于评估模型性能的函数：
+1. 函数签名表明，这个函数名为 `evaluate`，接受四个参数：`model`（LLMModel 类型的模型）、`tokenizer`（Tokenizer 类型的分词器）、`configs`（EvaluateConfig 类型的配置列表）、`max_seq_len`（一个可选的整数参数，默认为 512，用于指定最大序列长度）。
+2. 函数中的 `for` 循环遍历了配置列表 `configs` 中的每个配置项，通过调用 `init_task` 方法初始化任务，并检查每个配置项中的数据长度，以确定最大迭代次数 `max_iterations`。
+3. 接着是一个无限循环 `while True`，其中调用 `_dispatch_task_in` 函数来处理任务，获取当前的配置、批次标签和输入参数。
+4. 如果当前配置为空，则退出循环。
+5. 对模型 `model` 调用 `forward` 方法，传入输入参数 `input_args`，得到模型的输出 `outputs`。
+6. 将输入的 batch tokens 转换为 PyTorch 的张量 `input_ids`。
+7. 循环遍历模型的输出 `outputs`，并处理每个输出。对于每个输出，获取相关的配置、任务、度量指标、起始索引、结束索引和逻辑回归结果等信息。
+8. 根据任务类型，进行相应的处理。如果是单标签分类任务，则将逻辑回归结果转换为预测标签。如果任务类型不是单标签或多标签分类，则抛出 ValueError 异常。
+9. 将预测值和标签传递给度量指标对象，以便更新度量指标。
+10. 记录评估信息，包括适配器名称和当前评估数据的步骤信息。
+11. 循环结束后，再次遍历配置列表 `configs`，记录每个配置的评估结果，并调用 `compute` 方法计算度量指标的结果。
+12. 最终，将每个度量指标的名称和值记录到日志中。
+这个函数主要用于评估模型在给定配置下的性能，并记录评估结果。
+'''
 @torch.inference_mode()
 def evaluate(model: LLMModel,
              tokenizer: Tokenizer,
